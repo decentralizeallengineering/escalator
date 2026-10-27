@@ -1,5 +1,7 @@
 # escalator
 
+[![tests](https://github.com/decentralizeallengineering/escalator/actions/workflows/tests.yml/badge.svg)](https://github.com/decentralizeallengineering/escalator/actions/workflows/tests.yml) ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
+
 A small pipeline that spends strong-model effort only where a cheap model failed.
 
 1. A local model drafts a patch for one task row, as SEARCH/REPLACE edit blocks applied in a throwaway git worktree.
