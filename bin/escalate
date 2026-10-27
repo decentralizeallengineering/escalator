@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""escalate [-h] [--config FILE] [--no-fix] TASK_ID: run one task through the escalator pipeline.
+
+A local model drafts a patch for the task in a git worktree, the project's gate command runs, a cheap reviewer checks the diff,
+and on red a stronger model fixes it. A green result is committed on a branch (esc/<id>); nothing is ever pushed or merged.
+Prints one JSON result line (final = green | red | parked | infra). Configuration: see escalator.example.json."""
+import json, os, sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
+import escalator as E
+
+args = sys.argv[1:]
+if not args or args[0] in ("-h", "--help"):
+    print(__doc__)
+    sys.exit(0 if args else 2)
+cfgpath, nofix = None, "--no-fix" in args
+if "--config" in args:
+    i = args.index("--config")
+    cfgpath = args[i + 1]
+    del args[i:i + 2]
+args = [a for a in args if a != "--no-fix"]
+if len(args) != 1 or args[0].startswith("-"):
+    sys.exit("usage: escalate [--config FILE] [--no-fix] TASK_ID")
+print(json.dumps(E.run_task(E.load_config(cfgpath), args[0], nofix=nofix)))

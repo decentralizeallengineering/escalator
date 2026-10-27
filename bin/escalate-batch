@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""escalate-batch [N=3] [--config FILE] [--shard k/n] [--limit K] [--dry-run] [-h]: run the open tasks of the task file through `escalate`, N at a time.
+Tasks that are closed, already green, red twice or errored three times (see results.tsv in the log directory) are skipped.
+--shard k/n takes tasks whose crc32(id) % n == k so several lanes never pick the same one. Per-task claim files stop two lanes
+running the same task. Unknown flags exit with an error and start nothing. The fix stage is disabled (--no-fix) unless --fix is given."""
+import fcntl, json, os, subprocess, sys, time, zlib
+from concurrent.futures import ThreadPoolExecutor
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "lib"))
+import escalator as E
+
+args = sys.argv[1:]
+if any(a in ("-h", "--help") for a in args):
+    print(__doc__)
+    sys.exit(0)
+def take(flag):
+    if flag in args:
+        i = args.index(flag)
+        v = args[i + 1]
+        del args[i:i + 2]
+        return v
+cfgpath = take("--config")
+shard = tuple(int(x) for x in (take("--shard") or "0/1").split("/"))
+limit = take("--limit")
+limit = int(limit) if limit else None
+dry = "--dry-run" in args
+fix = "--fix" in args
+args = [a for a in args if a not in ("--dry-run", "--fix")]
+bad = [a for a in args if a.startswith("--")]
+if bad:
+    sys.exit("escalate-batch: unknown flag %s; usage: escalate-batch [N] [--config F] [--shard k/n] [--limit K] [--dry-run] [--fix]" % bad)
+par = int(args[0]) if args else 3
+cfg = E.load_config(cfgpath)
+tsv = os.path.join(cfg["logs"], "results.tsv")
+claims = os.path.join(cfg["logs"], "claims")
+os.makedirs(claims, exist_ok=True)
+done = E.tsv_state(E.slurp(tsv) if os.path.exists(tsv) else "")
+ps = subprocess.run(["pgrep", "-af", "escalate "], capture_output=True, text=True).stdout
+busy = {ln.split()[-1].lower() for ln in ps.splitlines() if ln.split() and "escalate-batch" not in ln}
+rows = E.pick_rows(E.read_tasks(cfg["tasks"]), done, busy)
+mine = [r for r in rows if zlib.crc32(r.encode()) % shard[1] == shard[0]]
+rows = mine or rows
+if limit:
+    rows = rows[:limit]
+if dry:
+    print("\n".join(rows))
+    print("rows:", len(rows))
+    sys.exit(0)
+
+def claim(tid):
+    """O_EXCL claim file per task; a claim whose pid is gone is stale and is replaced."""
+    cf = os.path.join(claims, E.slug(tid))
+    for _ in range(2):
+        try:
+            fd = os.open(cf, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return True
+        except FileExistsError:
+            pass
+        try:
+            pid = int(E.slurp(cf).strip() or 0)
+        except (OSError, ValueError):
+            pid = 0
+        if pid and os.path.exists("/proc/%d" % pid):
+            return False
+        try:
+            os.remove(cf)
+        except OSError:
+            pass
+    return False
+
+def one(tid):
+    t0 = time.time()
+    res, br = "error", "-"
+    if not claim(tid):
+        print(tid, "skip: claimed by another lane", flush=True)
+        return
+    try:
+        cmd = [os.path.join(HERE, "escalate")] + (["--config", cfgpath] if cfgpath else []) + ([] if fix else ["--no-fix"]) + [tid]
+        p = subprocess.run(["nice", "-n", "19"] + cmd, capture_output=True, text=True, timeout=9000)
+        j = json.loads(p.stdout.strip().splitlines()[-1])
+        res = j.get("final", "error")
+        br = j["branch"] if j.get("committed") else "-"
+    except Exception as e:
+        print(tid, "error", repr(e)[:300], flush=True)
+    finally:
+        try:
+            os.remove(os.path.join(claims, E.slug(tid)))
+        except OSError:
+            pass
+    line = "%s\t%s\t%d\t%s\t%s\n" % (tid, time.strftime("%FT%T", time.localtime(t0)), round(time.time() - t0), res, br)
+    if res != "infra":
+        with open(tsv, "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            f.write(line)
+    print(line, end="", flush=True)
+
+print("rows:", len(rows), rows, flush=True)
+with ThreadPoolExecutor(par) as ex:
+    list(ex.map(one, rows))

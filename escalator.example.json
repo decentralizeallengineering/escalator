@@ -1,0 +1,18 @@
+{
+  "repo": ".",
+  "base_branch": "main",
+  "tasks": "tasks.md",
+  "branch_prefix": "esc/",
+  "worktrees": "~/.cache/escalator/worktrees",
+  "logs": "~/.cache/escalator/logs",
+  "gate_cmd": "python3 -m pytest -q",
+  "gate_timeout": 1500,
+  "protected": ["tests/test_*.py"],
+  "max_diff_lines": 400,
+  "tries": 3,
+  "context_chars": 24000,
+  "rules": "Do not edit existing tests. Do not commit.",
+  "draft":  {"url": "http://127.0.0.1:8080/v1", "model": "local-draft"},
+  "review": {"url": "http://127.0.0.1:8081/v1", "model": "cheap-reviewer", "api_key_env": "REVIEW_API_KEY"},
+  "fix":    {"cmd": "my-strong-agent-cli --print"}
+}

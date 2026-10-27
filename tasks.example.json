@@ -1,0 +1,4 @@
+[
+  {"id": "T1", "text": "Make greet() return \"Hello, Ann Example\" instead of \"Hi\".", "files": ["app/greet.py"]},
+  {"id": "T2", "text": "Add a --version flag to the command line parser.", "files": []}
+]
